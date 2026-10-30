@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>이미지 갤러리</title>
+<style>
+  :root{
+    --bg:#f1f2f6; --panel:#fff; --ctl:#eeeff3; --line:#dcdfe6; --txt:#1d1d1f; --sub:#6b7280;
+    --blue:#0a84ff; --ok:#1c8a3b; --warn-bg:#fff4e0; --warn-line:#f2c26b; --warn-txt:#8a5a00;
+    color-scheme:light;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#101115;--panel:#1a1b20;--ctl:#2a2c34;--line:#363944;--txt:#eceef3;--sub:#9ba1ad;
+          --blue:#3b8bff;--ok:#6fd68b;--warn-bg:#3a2e14;--warn-line:#7a5d1d;--warn-txt:#f1c97a;color-scheme:dark}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:Pretendard,"Noto Sans KR","Malgun Gothic",Arial,sans-serif;font-size:14px;line-height:1.6}
+  header{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);padding:12px 16px}
+  h1{margin:0 0 10px;font-size:17px}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  input,select,button{font:inherit;color:inherit}
+  input,select{background:var(--ctl);border:1px solid transparent;border-radius:9px;padding:7px 10px;outline:none}
+  input:focus,select:focus{border-color:var(--blue);background:var(--panel)}
+  .ipt-sm{width:150px}
+  .grow{flex:1;min-width:160px}
+  button{background:var(--ctl);border:1px solid var(--line);border-radius:9px;padding:7px 12px;font-weight:600;cursor:pointer}
+  button:hover{filter:brightness(.96)}
+  button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  .hint{color:var(--sub);font-size:12.5px;margin:8px 0 0}
+  .tabs{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+  .tab{background:var(--ctl);border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:12.5px;font-weight:600}
+  .tab.on{background:var(--blue);border-color:var(--blue);color:#fff}
+  .tab small{opacity:.7;margin-left:5px;font-weight:400}
+  .gh{grid-column:1/-1;margin:6px 0 0;font-size:13px;font-weight:700}
+  .gh small{color:var(--sub);font-weight:400;margin-left:6px}
+  .dir{display:block;color:var(--sub);font-size:11.5px}
+  .warn{margin:10px 16px 0;padding:9px 11px;border:1px solid var(--warn-line);background:var(--warn-bg);
+        color:var(--warn-txt);border-radius:10px;font-size:13px}
+  main{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+        display:flex;flex-direction:column;cursor:pointer;text-align:left;padding:0}
+  .card:hover{border-color:var(--blue)}
+  .thumb{height:140px;background:var(--ctl) center/contain no-repeat;display:block}
+  .meta{padding:8px 10px}
+  .nm{display:block;font-size:12.5px;font-weight:700;word-break:break-all;line-height:1.45}
+  .sz{display:block;color:var(--sub);font-size:11.5px;margin-top:2px}
+  .empty{grid-column:1/-1;text-align:center;color:var(--sub);padding:40px 10px}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#23252c;color:#fff;
+         border-radius:999px;padding:10px 18px;font-size:13.5px;box-shadow:0 8px 28px rgba(0,0,0,.35);z-index:10}
+  .toast[hidden]{display:none}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>이미지 갤러리</h1>
+  <div class="row">
+    <input id="owner" class="ipt-sm" placeholder="GitHub 아이디" value="dhrrud388-ai">
+    <input id="repo" class="ipt-sm" placeholder="저장소 이름" value="blog-source">
+    <input id="branch" class="ipt-sm" style="width:100px" placeholder="브랜치" value="main">
+    <button id="load" class="primary" type="button">목록 불러오기</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <input id="q" class="grow" type="search" placeholder="파일 이름으로 찾기">
+    <select id="kind">
+      <option value="pages">주소 형식: GitHub Pages</option>
+      <option value="raw">주소 형식: Raw</option>
+    </select>
+    <span id="count" class="hint" style="margin:0"></span>
+  </div>
+  <div class="tabs" id="tabs"></div>
+  <p class="hint">이미지를 누르면 그 주소가 복사됩니다. 생성기의 이미지 URL 칸에 붙여넣으세요.</p>
+</header>
+
+<div id="msg"></div>
+<main id="grid"></main>
+<div id="toast" class="toast" hidden></div>
+
+<script>
+(function () {
+  'use strict';
+  var EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i;
+  var $ = function (s) { return document.querySelector(s); };
+  var grid = $('#grid'), msg = $('#msg'), toastEl = $('#toast'), items = [], toastT = 0, curDir = '*';
+  var ROOT = '(폴더 없음)';
+  function dirOf(p) { var i = p.lastIndexOf('/'); return i < 0 ? ROOT : p.slice(0, i); }
+  function baseOf(p) { var i = p.lastIndexOf('/'); return i < 0 ? p : p.slice(i + 1); }
+
+  function toast(t) {
+    toastEl.textContent = t; toastEl.hidden = false;
+    clearTimeout(toastT); toastT = setTimeout(function () { toastEl.hidden = true; }, 1600);
+  }
+  function note(html, warn) {
+    msg.innerHTML = html ? '<div class="' + (warn ? 'warn' : 'hint') + '" style="margin:10px 16px 0">' + html + '</div>' : '';
+  }
+  function cfg() {
+    return { owner: $('#owner').value.trim(), repo: $('#repo').value.trim(), branch: $('#branch').value.trim() || 'main' };
+  }
+  function urlOf(path) {
+    var c = cfg(), p = path.split('/').map(encodeURIComponent).join('/');
+    return $('#kind').value === 'raw'
+      ? 'https://raw.githubusercontent.com/' + c.owner + '/' + c.repo + '/' + c.branch + '/' + p
+      : 'https://' + c.owner + '.github.io/' + c.repo + '/' + p;
+  }
+  function human(n) {
+    if (!n && n !== 0) return '';
+    return n < 1024 ? n + 'B' : n < 1048576 ? (n / 1024).toFixed(0) + 'KB' : (n / 1048576).toFixed(1) + 'MB';
+  }
+  function copy(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () { toast('주소를 복사했습니다'); },
+        function () { fallback(text); });
+    } else fallback(text);
+  }
+  function fallback(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast('주소를 복사했습니다'); }
+    catch (e) { toast('복사하지 못했습니다'); }
+    document.body.removeChild(ta);
+  }
+
+  function dirs() {
+    var seen = {}, out = [];
+    items.forEach(function (it) { var d = dirOf(it.path); if (!seen[d]) { seen[d] = 1; out.push(d); } });
+    out.sort(function (a, b) { return a === ROOT ? 1 : b === ROOT ? -1 : a.localeCompare(b); });
+    return out;
+  }
+  function paintTabs() {
+    var box = $('#tabs'); box.innerHTML = '';
+    var ds = dirs();
+    if (!ds.length) return;
+    var all = [{ k: '*', label: '전체', n: items.length }];
+    ds.forEach(function (d) {
+      all.push({ k: d, label: d === ROOT ? d : d, n: items.filter(function (it) { return dirOf(it.path) === d; }).length });
+    });
+    all.forEach(function (t) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'tab' + (curDir === t.k ? ' on' : '');
+      b.innerHTML = '';
+      b.appendChild(document.createTextNode(t.label));
+      var s = document.createElement('small'); s.textContent = t.n; b.appendChild(s);
+      b.addEventListener('click', function () { curDir = t.k; paintTabs(); render(); });
+      box.appendChild(b);
+    });
+  }
+  function cardFor(it, showDir) {
+    var u = urlOf(it.path);
+    var card = document.createElement('button');
+    card.type = 'button'; card.className = 'card'; card.title = u;
+    var th = document.createElement('span');
+    th.className = 'thumb';
+    th.style.backgroundImage = 'url("' + u.replace(/"/g, '%22') + '")';
+    var meta = document.createElement('span');
+    meta.className = 'meta';
+    var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = baseOf(it.path);
+    meta.appendChild(nm);
+    if (showDir && dirOf(it.path) !== ROOT) {
+      var dv = document.createElement('span'); dv.className = 'dir'; dv.textContent = dirOf(it.path);
+      meta.appendChild(document.createElement('br')); meta.appendChild(dv);
+    }
+    var sz = document.createElement('span'); sz.className = 'sz'; sz.textContent = human(it.size);
+    meta.appendChild(sz);
+    card.appendChild(th); card.appendChild(meta);
+    card.addEventListener('click', function () { copy(urlOf(it.path)); });
+    return card;
+  }
+  function render() {
+    var q = $('#q').value.trim().toLowerCase();
+    var list = items.filter(function (it) {
+      if (curDir !== '*' && dirOf(it.path) !== curDir) return false;
+      return !q || it.path.toLowerCase().indexOf(q) >= 0;
+    });
+    $('#count').textContent = items.length ? '이미지 ' + list.length + ' / ' + items.length + '개' : '';
+    grid.innerHTML = '';
+    if (!list.length) {
+      var d = document.createElement('div');
+      d.className = 'empty';
+      d.textContent = items.length ? '해당하는 이미지가 없습니다.' : '목록 불러오기를 눌러 주세요.';
+      grid.appendChild(d); return;
+    }
+    if (curDir === '*' && dirs().length > 1) {
+      dirs().forEach(function (dir) {
+        var g = list.filter(function (it) { return dirOf(it.path) === dir; });
+        if (!g.length) return;
+        var h = document.createElement('h2');
+        h.className = 'gh'; h.textContent = dir;
+        var s = document.createElement('small'); s.textContent = g.length + '개'; h.appendChild(s);
+        grid.appendChild(h);
+        g.forEach(function (it) { grid.appendChild(cardFor(it, false)); });
+      });
+      return;
+    }
+    list.forEach(function (it) { grid.appendChild(cardFor(it, curDir === '*')); });
+  }
+
+  function load() {
+    var c = cfg();
+    if (!c.owner || !c.repo) { note('아이디와 저장소 이름을 넣어 주세요.', true); return; }
+    note('불러오는 중…');
+    var api = 'https://api.github.com/repos/' + encodeURIComponent(c.owner) + '/' + encodeURIComponent(c.repo)
+            + '/git/trees/' + encodeURIComponent(c.branch) + '?recursive=1';
+    fetch(api, { headers: { Accept: 'application/vnd.github+json' } })
+      .then(function (r) {
+        if (r.status === 404) throw new Error('저장소나 브랜치를 찾지 못했습니다. 아이디·저장소 이름·브랜치를 확인해 주세요. (비공개 저장소는 읽을 수 없습니다)');
+        if (r.status === 403) throw new Error('GitHub 요청 한도에 걸렸습니다. 잠시 뒤 다시 눌러 주세요.');
+        if (!r.ok) throw new Error('목록을 불러오지 못했습니다. (HTTP ' + r.status + ')');
+        return r.json();
+      })
+      .then(function (d) {
+        items = (d.tree || []).filter(function (t) { return t.type === 'blob' && EXT.test(t.path); })
+          .sort(function (a, b) { return a.path.localeCompare(b.path); });
+        note(d.truncated ? '파일이 너무 많아 일부만 불러왔습니다.' : '', !!d.truncated);
+        if (curDir !== '*' && !items.some(function (it) { return dirOf(it.path) === curDir; })) curDir = '*';
+        paintTabs(); render();
+      })
+      .catch(function (e) { note(e.message, true); items = []; render(); });
+  }
+
+  $('#load').addEventListener('click', load);
+  $('#q').addEventListener('input', render);
+  $('#kind').addEventListener('change', render);
+  ['owner', 'repo', 'branch'].forEach(function (id) {
+    $('#' + id).addEventListener('keydown', function (e) { if (e.key === 'Enter') load(); });
+  });
+  render();
+  load();
+})();
+</script>
+</body>
+</html>
